@@ -1,53 +1,141 @@
-def update_join(left_df, right_df, on, right_col, fillna=True, validate=True):
-    """Simple function to mimic a SQL update set col1 = col2 from df1 join df2 on df1.key == df2.key. Does not modify dataframes in place.
-    
-    Arguments:
-        left_df {dataframe} -- Left Dataframe.
-        right_df {dataframe} -- Right Dataframe.
-        on {str} -- Key or shared column to 'join' both dataframes on.
-        right_col {str} -- Col2, the column from which we are updating column 1.
-    
-    Keyword Arguments:
-        fillna {bool} -- Whether or not to fill gaps in Col1. (default: {True})
-        validate {bool} -- Checks to make sure the indexes share values and warn if something is off. (default: {True})
-    
-    Raises:
-        KeyError: No shared key.
-        KeyError: No shared indexes in that key.
-        KeyError: Right column does not exist in right dataframe.
-    
-    Returns:
-        pd.Series -- A pandas Series with the length of left dataframe updated with the values of the right column based on the key.
-    """
-    import warnings
+import warnings
+import itertools
+from pandas_schema import Column, Schema
+import pandas as pd
+import numpy as np
+from pandas_schema.validation import (
+    CanConvertValidation,
+    InListValidation,
+    InRangeValidation,
+    IsDistinctValidation,
+    LeadingWhitespaceValidation,
+    MatchesPatternValidation,
+    TrailingWhitespaceValidation,
+)
 
-    left_df = left_df.copy()
-    right_df = right_df.copy()
 
-    if right_col not in right_df.columns:
-        raise KeyError("Column not found in right dataframe")
-
-    if on not in set(left_df.columns).intersection(right_df.columns):
-        raise KeyError("Key is not shared between dataframes")
-
-    if validate:
-
-        if set(right_df[on]).issubset(set(left_df[on])):
-            warnings.warn("Not all keys matching may result in Nans")
-
-        if not set(right_df[on]).intersection(set(left_df[on])):
-            raise KeyError("No matching keys between indexes")
-
-    if fillna:
-
-        return (
-            right_df.set_index(on)
-            .reindex(left_df[on])
-            .reset_index()[right_col]
-            .fillna(right_df[right_col])
+class PandasJoin:
+    @staticmethod
+    def check_join_cols(df1, df2, on):
+        schema = Schema(
+            [
+                Column(
+                    col,
+                    [
+                        LeadingWhitespaceValidation(),
+                        TrailingWhitespaceValidation(),
+                        IsDistinctValidation(),
+                    ],
+                )
+                for col in on
+            ]
         )
+        results = [schema.validate(df) for df in [df1[on], df2[on]]]
 
-    else:
+        if len(results) > 0:
+            errors = [error.__str__() for error in itertools.chain(*results)]
+            warnings.warn(f"The Following Problems exist in the index {errors}")
 
-        return right_df.set_index(on).reindex(left_df[on]).reset_index()[right_col]
+    @staticmethod
+    def update_join(
+        df1,
+        df2,
+        update_col,
+        source_col,
+        target_index,
+        on,
+        how="inner",
+        overwrite=False,
+        validate_indexes=False,
+    ):
+
+        df1 = df1.copy()
+        df2 = df2.copy()
+
+        if validate_indexes:
+            PandasJoin.check_join_cols(df1, df2, on)
+
+        if not update_col in df1.columns:
+            print(f"New column assignment detected, creating: '{update_col}''")
+            df1[update_col] = None
+
+        if not df1.index.name:
+            warnings.warn(
+                f"Index not set on df1, attempting to set index to {target_index}"
+            )
+            df1 = df1.set_index(target_index)
+
+        if df1.index.name != target_index:
+            warnings.warn(
+                f"Index of update column does not match that of source column, attempting to set to {target_index}"
+            )
+            df1 = df1.reset_index()
+            df1 = df1.set_index(target_index)
+
+        if source_col in on or source_col == target_index:
+            print("Index column is being used as a key, creating temporary column")
+            df2["temp_col"] = df2.reset_index()[source_col]
+            temp = (
+                df1.merge(df2, on=on, how=how)
+                .set_index(target_index)["temp_col"]
+                .rename(update_col)
+            )
+        else:
+            temp = (
+                df1.merge(df2, on=on, how=how)
+                .set_index(target_index)[source_col]
+                .rename(update_col)
+            )
+
+        if len(temp) == 0:
+            raise ValueError("Join failed, check indexes and try again")
+        else:
+            print(
+                f"Assigning the following values to '{update_col}' in df1 \n {temp[df1.loc[temp.index,update_col].isnull()]}"
+            )
+
+        try:
+            df1.update(other=temp, join="left", overwrite=overwrite)
+            return df1
+        except ValueError:
+            print(
+                f"Cannot assign {update_col} when duplicates {df2[on].duplicated().sum()} exist in join column(s) {on}, you might try setting on more than one column that forms a unique key"
+            )
+
+
+if __name__ == "__main__":
+
+    df1 = pd.DataFrame(
+        np.array(
+            [["a", 5, 9, None], 
+            ["b", 14, 61, 10], 
+            ["c", 4, 9, None], 
+            ["d", 3, 1, 30],]
+        ),
+        columns=["key", "key2", "attr12", "attr13"],
+    )
+
+    df2 = pd.DataFrame(
+        np.array(
+            [["a", 5, 19], 
+            ["b", 14, 16], 
+            ["c", 4, 9], 
+            ["d", 3, 1], 
+            ["c", 3, 19]]
+        ),
+        columns=["key", "key2", "attr22"],
+    )
+
+    test_df = PandasJoin.update_join(
+        df1=df1,
+        df2=df2,
+        update_col="new",
+        target_index="key",
+        source_col="key2",
+        on=["key", "key2"],
+        how="inner",
+        overwrite=False,
+        validate_indexes=False,
+    )
+    print(test_df)
 
