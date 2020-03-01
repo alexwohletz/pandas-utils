@@ -3,84 +3,78 @@ import pandas as pd
 from pandas.testing import assert_series_equal
 from pandas.testing import assert_frame_equal
 import numpy as np
-from utils import update_join
+from utils import SQLUpdate
 
 
 @pytest.fixture(scope="module")
-def data1():
+def df1():
     return pd.DataFrame(
         np.array(
-            [
-                ["a", "one", 9, 8],
-                ["b", "two", 61, 10],
-                ["c", "three", 9, 225],
-                ["d", "four", 1, 30],
-            ]
+            [["a", 5, 9, None], ["b", 14, 61, 10], ["c", 4, 9, None], ["d", 3, 1, 30]]
         ),
-        columns=["key", "attr11", "attr12", "attr13"],
-    )
+        columns=["key", "key2", "attr11", "attr12"],
+    ).astype({"key": "str", "key2": "int"})
 
 
 @pytest.fixture(scope="module")
-def data2():
+def df2():
     return pd.DataFrame(
-        {
-            "key": ["a", "b", "c", "d", "a", "b", "c", "d", "c", "a"],
-            "attr21": [x * 2 for x in range(10)],
-            "attr22": [x ** 2 for x in range(10)],
-            "attr23": [0, 1, None, 3, 4, 5, 6, None, 9, None],
-        }
-    )
+        np.array([["a", 5, 19], ["b", 14, 16], ["c", 4, 9], ["d", 3, 1], ["c", 3, 19]]),
+        columns=["key", "key2", "attr21"],
+    ).astype({"key": "str", "key2": "int"})
 
 
 @pytest.fixture(scope="module")
-def data_no_key():
+def df2_nulls():
     return pd.DataFrame(
-        {
-            "dnk1": [x * 2 for x in range(10)],
-            "dnk2": [x ** 2 for x in range(10)],
-            "dnk3": [0, 1, None, 3, 4, 5, 6, None, 9, None],
-        }
+        np.array(
+            [["a", None, 19], ["b", 14, 16], ["c", 4, 9], ["d", 3, 1], ["c", None, 19]]
+        ),
+        columns=["key", "key2", "attr21"],
+    ).astype({"key": "str", "key2": "int"})
+
+
+def test_new_col_no_ind(df1, df2):
+    # Case where new column, no index specified, should raise warning.
+    series = pd.Series(
+        ["19", "16", "9", "1"],
+        name="new",
+        index=pd.Index(["a", "b", "c", "d"], name="key"),
     )
-
-
-@pytest.fixture(scope="module")
-def bad_data():
-    return pd.DataFrame(
-        np.array([["1", 15, 49], ["2", 4, 36], ["3", 14, 9]]),
-        columns=["key", "bd1", "bd2"],
-    )
-
-
-def test_update_join_with_warn(data1, data2):
-
-    test = pd.Series(
-        ["one", "two", "three", "four", "one", "two", "three", "four", "three", "one"]
-    )
-
-    # Check warning raised for key subset
-    with pytest.warns(UserWarning, match="Not all keys matching may result in Nans"):
-        col = update_join(
-            left_df=data2,
-            right_df=data1,
-            on="key",
-            right_col="attr11",
-            fillna=True,
-            validate=True,
+    with pytest.warns(UserWarning):
+        test = SQLUpdate.update_join(
+            df1=df1,
+            df2=df2,
+            update_col="new",
+            target_index="key",
+            source_col="attr21",
+            on=["key", "key2"],
+            how="inner",
+            overwrite=False,
+            validate_indexes=False,
         )
-    # Make sure we get expected results
-    assert_series_equal(test, col, check_names=False)
+
+    assert_series_equal(test["new"], series)
 
 
-def test_update_join_no_match_key(data1, data_no_key):
-
-    with pytest.raises(KeyError, match="Key is not shared between dataframes"):
-        update_join(
-            left_df=data1,
-            right_df=data_no_key,
-            on="key",
-            right_col="dnk1",
-            fillna=True,
-            validate=True,
+def test_existing_col_no_ind(df1, df2):
+    # Case where exiting column, no index specified, should raise warning.
+    series = pd.Series(
+        ["a", 10, "c", 30],
+        name="attr12",
+        index=pd.Index(["a", "b", "c", "d"], name="key"),
+    )
+    with pytest.warns(UserWarning):
+        test = SQLUpdate.update_join(
+            df1=df1,
+            df2=df2,
+            update_col="attr12",
+            target_index="key",
+            source_col="key",
+            on=["key", "key2"],
+            how="inner",
+            overwrite=False,
+            validate_indexes=False,
         )
+    assert_series_equal(test["attr12"], series)
 

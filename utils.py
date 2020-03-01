@@ -4,28 +4,21 @@ from pandas_schema import Column, Schema
 import pandas as pd
 import numpy as np
 from pandas_schema.validation import (
-    CanConvertValidation,
-    InListValidation,
-    InRangeValidation,
     IsDistinctValidation,
     LeadingWhitespaceValidation,
-    MatchesPatternValidation,
     TrailingWhitespaceValidation,
 )
 
 
-class PandasJoin:
+class SQLUpdate:
     @staticmethod
     def check_join_cols(df1, df2, on):
+
         schema = Schema(
             [
                 Column(
                     col,
-                    [
-                        LeadingWhitespaceValidation(),
-                        TrailingWhitespaceValidation(),
-                        IsDistinctValidation(),
-                    ],
+                    [LeadingWhitespaceValidation(), TrailingWhitespaceValidation()],
                 )
                 for col in on
             ]
@@ -33,8 +26,9 @@ class PandasJoin:
         results = [schema.validate(df) for df in [df1[on], df2[on]]]
 
         if len(results) > 0:
-            errors = [error.__str__() for error in itertools.chain(*results)]
-            warnings.warn(f"The Following Problems exist in the index {errors}")
+            print("The following issues exist in the index:")
+            for error in itertools.chain(*results):
+                print(error)
 
     @staticmethod
     def update_join(
@@ -53,10 +47,10 @@ class PandasJoin:
         df2 = df2.copy()
 
         if validate_indexes:
-            PandasJoin.check_join_cols(df1, df2, on)
+            SQLUpdate.check_join_cols(df1, df2, on)
 
         if not update_col in df1.columns:
-            print(f"New column assignment detected, creating: '{update_col}''")
+            print(f"New column assignment detected, creating: '{update_col}'")
             df1[update_col] = None
 
         if not df1.index.name:
@@ -72,8 +66,11 @@ class PandasJoin:
             df1 = df1.reset_index()
             df1 = df1.set_index(target_index)
 
+        # If the index column is being used as the source, create a temp column on a reset index
         if source_col in on or source_col == target_index:
-            print("Index column is being used as a key, creating temporary column")
+            print(
+                "Index column is being used as the source column, creating temporary column"
+            )
             df2["temp_col"] = df2.reset_index()[source_col]
             temp = (
                 df1.merge(df2, on=on, how=how)
@@ -81,17 +78,27 @@ class PandasJoin:
                 .rename(update_col)
             )
         else:
-            temp = (
-                df1.merge(df2, on=on, how=how)
-                .set_index(target_index)[source_col]
-                .rename(update_col)
-            )
+            # If the index is already set to the target index, perform the update without changing the index
+            if df1.index.name == target_index and df2.index.name == target_index:
+                temp = df1.merge(df2, on=on, how=how)[source_col].rename(update_col)
+            else:
+                temp = (
+                    df1.merge(df2, on=on, how=how)
+                    .set_index(target_index)[source_col]
+                    .rename(update_col)
+                )
 
         if len(temp) == 0:
-            raise ValueError("Join failed, check indexes and try again")
+            raise ValueError(
+                "Join failed, check join keys for datatype match and try again"
+            )
+        if overwrite:
+            print(
+                f"Overwriting '{update_col}' in df1 with the following values from df2 '{source_col}': \n {temp}"
+            )
         else:
             print(
-                f"Assigning the following values to '{update_col}' in df1 \n {temp[df1.loc[temp.index,update_col].isnull()]}"
+                f"Assigning the following values to '{update_col}' in df1 from df2 '{source_col}': \n {temp[df1.loc[temp.index,update_col].isnull()]}"
             )
 
         try:
@@ -107,35 +114,30 @@ if __name__ == "__main__":
 
     df1 = pd.DataFrame(
         np.array(
-            [["a", 5, 9, None], 
-            ["b", 14, 61, 10], 
-            ["c", 4, 9, None], 
-            ["d", 3, 1, 30],]
+            [["a", 5, 9, None], ["b", 14, 61, 10], ["c", 4, 9, None], ["d", 3, 1, 30],]
         ),
         columns=["key", "key2", "attr12", "attr13"],
     )
 
     df2 = pd.DataFrame(
-        np.array(
-            [["a", 5, 19], 
-            ["b", 14, 16], 
-            ["c", 4, 9], 
-            ["d", 3, 1], 
-            ["c", 3, 19]]
-        ),
+        np.array([["a", 5, 19], ["b", 14, 16], ["c", 4, 9], ["d", 3, 1], ["c", 3, 19]]),
         columns=["key", "key2", "attr22"],
     )
 
-    test_df = PandasJoin.update_join(
+    df2 = df2.assign(key=df2["key"].astype(str), key2=df2["key2"].astype(str))
+
+    df1 = df1.assign(key=df1["key"].astype(str), key2=df1["key2"].astype(str))
+
+    test_df = SQLUpdate.update_join(
         df1=df1,
         df2=df2,
-        update_col="new",
+        update_col="attr13",
         target_index="key",
-        source_col="key2",
+        source_col="key",
         on=["key", "key2"],
         how="inner",
         overwrite=False,
-        validate_indexes=False,
+        validate_indexes=True,
     )
     print(test_df)
 
