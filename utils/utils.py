@@ -42,6 +42,28 @@ class SQLUpdate:
         overwrite=False,
         validate_indexes=False,
     ):
+        """Updates or creates a dataframe column based on the indexes from a merge between two frames.
+        Similar to a SQL update with join statement.
+        
+        Arguments:
+            df1 {pd.DataFrame} -- Dataframe to perform column update.
+            df2 {pd.DataFrame} -- Dataframe providing source column.
+            update_col {str} -- Column to update. Can exist in axis or can be a new column.
+            source_col {str} -- Column from which to derive values.  If index is used, will re-index and create temp column.
+            target_index {str or list} -- Column or list of columns to set as axis of update.
+            on {str} -- Column or list of columns to join on.
+        
+        Keyword Arguments:
+            how {str} -- whether a join is inner, outer, left, or right (default: {"inner"})
+            overwrite {bool} -- overwrite existing non-Nan values in target column if values match on indexes. (default: {False})
+            validate_indexes {bool} -- Check if indexes have potential issues such as being non-distinct or have trailing spaces (default: {False})
+        
+        Raises:
+            ValueError: Duplicate indexes exist on assignment.
+        
+        Returns:
+            [pd.Dataframe] -- Dataframe with updated column, copy of df1.
+        """
         #Create copies to avoid changing original frames
         df1 = df1.copy()
         df2 = df2.copy()
