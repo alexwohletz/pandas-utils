@@ -18,7 +18,7 @@ class SQLUpdate:
             [
                 Column(
                     col,
-                    [LeadingWhitespaceValidation(), TrailingWhitespaceValidation()],
+                    [LeadingWhitespaceValidation(), TrailingWhitespaceValidation(),IsDistinctValidation()],
                 )
                 for col in on
             ]
@@ -42,10 +42,17 @@ class SQLUpdate:
         overwrite=False,
         validate_indexes=False,
     ):
-
+        #Create copies to avoid changing original frames
         df1 = df1.copy()
         df2 = df2.copy()
 
+        #If indexes are already set to the target index, reset index
+        if df1.index.name == target_index and df2.index.name == target_index:
+            df1 = df1.reset_index()
+            df2 = df2.reset_index()
+
+        #Check indexes for possible problems
+        #TODO better validation
         if validate_indexes:
             SQLUpdate.check_join_cols(df1, df2, on)
 
@@ -69,7 +76,7 @@ class SQLUpdate:
         # If the index column is being used as the source, create a temp column on a reset index
         if source_col in on or source_col == target_index:
             print(
-                "Index column is being used as the source column, creating temporary column"
+                "Index column is being used as the source column, creating temporary column in df2"
             )
             df2["temp_col"] = df2.reset_index()[source_col]
             temp = (
@@ -79,27 +86,28 @@ class SQLUpdate:
             )
         else:
             # If the index is already set to the target index, perform the update without changing the index
-            if df1.index.name == target_index and df2.index.name == target_index:
-                temp = df1.merge(df2, on=on, how=how)[source_col].rename(update_col)
-            else:
-                temp = (
-                    df1.merge(df2, on=on, how=how)
-                    .set_index(target_index)[source_col]
-                    .rename(update_col)
-                )
 
+            temp = (
+                df1.merge(df2, on=on, how=how)
+                .set_index(target_index)[source_col]
+                .rename(update_col)
+            )
+            # If the temp table has no length, something has gone wrong.
         if len(temp) == 0:
             raise ValueError(
                 "Join failed, check join keys for datatype match and try again"
             )
         if overwrite:
             print(
-                f"Overwriting '{update_col}' in df1 with the following values from df2 '{source_col}': \n {temp}"
+                f"Overwriting '{update_col}' in df1 with the following values from df2 '{df2[source_col].head(10)}': \n {temp}"
             )
         else:
-            print(
-                f"Assigning the following values to '{update_col}' in df1 from df2 '{source_col}': \n {temp[df1.loc[temp.index,update_col].isnull()]}"
-            )
+            #Advise the caller what is being updated, sometimes this fails.
+            try:
+                print(f"Assigning the following values to '{update_col}' in df1 \n {temp[df1.loc[temp.index,update_col].isnull()].head(10)}")
+            except ValueError: 
+                print(f"Assigning the following values to '{update_col}' from df2 \n {df2[source_col].head(10)}")
+                pass
 
         try:
             df1.update(other=temp, join="left", overwrite=overwrite)
